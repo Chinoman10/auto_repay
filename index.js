@@ -56,6 +56,7 @@ class Repay{
             sleep(300)
             console.log(err)
         }
+        sleep(6500)
     }
     
     async pollingTx(txHash) {
