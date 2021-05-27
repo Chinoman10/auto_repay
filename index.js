@@ -1,13 +1,17 @@
 const { MnemonicKey, LCDClient, MsgExecuteContract, MsgSwap, Wallet, Coin, Coins, StdFee} = require('@terra-money/terra.js');
 const fetchAPI = require('./fetchAPI')
 const fs = require('fs')
+const rl = require("readline").createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
 const moment = require('moment');
 require('dotenv').config();
 
 const MNEMONIC = process.env.MNEMONIC != '' ? process.env.MNEMONIC : process.argv[2];
 const COIN_TYPE = 330;
 //contract addresses
-const market =  'terra1sepfj7s0aeg5967uxnfk4thzlerrsktkpelm5s'
+const market = 'terra1sepfj7s0aeg5967uxnfk4thzlerrsktkpelm5s'
 const overseer = 'terra1tmnqgvg567ypvsvk6rwsga3srp7e3lg6u0elp8'
 const bLUNA_token = 'terra1kc87mu460fwkqte29rquh4hc20m54fxwtsx7gp'
 const custody = 'terra1ptjp2vfjrwh0j0faj9r6katm640kgjxnwwq9kn'
@@ -45,37 +49,30 @@ class Repay{
 
             fee = new StdFee(1000000, (250000 + tax).toString() + 'uusd') 
         }
-        let isFound = false
+
         try{
             const tx = await this.wallet.createAndSignTx({msgs, fee});
-            const result = await this.wallet.lcd.tx.broadcastSync(tx);       
-            isFound = await this.pollingTx(result.txhash)
-            if(isFound){
-                console.log('Transaction Completed\n')
-            }else{
-                console.log('Transaction Fail, skip transaction')
-            }
+            const result = await this.wallet.lcd.tx.broadcastSync(tx);    
+            await this.pollingTx(result.txhash)
+            console.log('Transaction Completed\n')
         }catch (err){
             console.log('Transaction Fail')
-            await sleep(300)
+            sleep(300)
             console.log(err)
         }
         sleep(6500)
     }
     
     async pollingTx(txHash) {
-        let isFound = false;
-        let count = 0; 
-        while (!isFound && count < 5){ // to escape stuck
+        let isFound = false;    
+        while (!isFound) {
           try {
             await this.wallet.lcd.tx.txInfo(txHash);            
             isFound = true;
           } catch (err) {
-            await sleep(3000);
-            count += 1            
+            await sleep(3000);            
           }
         }
-        return isFound
     }
 
     //repay
@@ -303,18 +300,6 @@ class Repay{
         )
         await this.execute([borrow], 'ANC')
     }
-    async deposit_ust(ust_amount){
-        console.log('Deposit UST...')
-        let borrow = new MsgExecuteContract(
-            this.wallet.key.accAddress,
-            market,
-            {
-                "deposit_stable": {}
-            },
-            {uusd:ust_amount}
-        )
-        await this.execute([borrow], 'repay')
-    }
 }
 
 repayHandler = new Repay
@@ -424,8 +409,6 @@ function percent2number(input){
 
 var option = JSON.parse(fs.readFileSync('option.txt').toString())
 
-
-
 //initialize values
 var percentNow = 0;
 var borrowLimit = 1;
@@ -511,6 +494,7 @@ async function check_remain_UST(){
 }
 
 async function get_UST(option, insufficientUST){
+
     if (option[0] == 'aUST'){
         await aUST_process(insufficientUST)
     }else if(option[0]=='LP'){
@@ -542,9 +526,30 @@ async function getting_UST_process(UST_remain, total_needed_amount){
     for (option of get_UST_option){
         await get_UST(option, total_needed_amount - UST_remain)
         UST_remain = await fetchAPI.ust_balance(myAddress)
-        if (UST_remain * 0.95 > total_needed_amount){ // if UST_balance is more than repay amount
+        if (UST_remain * 0.99 > total_needed_amount){ // if UST_balance is more than repay amount
             break;
         }
+    }
+}
+
+function mnemonicCheck() {
+    rl.on('SIGINT', () => {
+        rl.question('Are you sure you want to exit? ', (answer) => {
+          if (answer.match(/^y(es)?$/i)) rl.pause();
+        });
+    });
+    while (!(MNEMONIC)) {
+        rl.question("What is your wallet passphrase? ", mnemonic_ans => {
+            MNEMONIC = mnemonic_ans
+            rl.close();
+            // process.stdout.write('\033c'); // uncomment this if you wish to clear the console after the input, so that the passphrase isn't seen in clear text
+            if (!(MNEMONIC)) {
+                console.log("Pass-phrase was kept empty. Exiting...")
+                process.exit(0);
+            }
+        })
+        
+        sleep (1000) // this shouldn't be needed... but the JS isn't waiting for the user input for some reason...
     }
 }
 
@@ -555,6 +560,7 @@ function sleep(ms) {
 
 
 async function main(){
+    mnemonicCheck()
     let option_check = await check_option()
     let UST_check = await check_remain_UST()
     if(option_check && UST_check){
@@ -568,15 +574,15 @@ async function main(){
                 }
                 await sleep(1000)
                 UST_remain = await fetchAPI.ust_balance(myAddress)
-                if(Math.min(UST_remain - 10000000, total_needed_amount) > 0){
-                    await repayHandler.repay(Math.min(UST_remain - 10000000, total_needed_amount)) //10UST for gas fee
+                if(Math.min(UST_remain - 3000000, total_needed_amount) > 0){
+                    await repayHandler.repay(Math.min(UST_remain - 3000000, total_needed_amount)) //3UST for gas fee
                     nowPercent = await update_state()
                 }
                 
                 if (nowPercent > trigger_percent && instant_burn == "on"){ //if nowPercent still obove trigger_percent do instant burn
                     await instant_burn_process(percentNow)
                     UST_remain = await fetchAPI.ust_balance(myAddress)
-                    await repayHandler.repay(UST_remain - 10000000)
+                    await repayHandler.repay(UST_remain - 3000000)
                     nowPercent = await update_state()
                 }
             }else if(nowPercent < belowTrigger){
@@ -586,7 +592,7 @@ async function main(){
             
 
 
-            await sleep(20000)
+            await sleep(15000)
         }
     }
 }
